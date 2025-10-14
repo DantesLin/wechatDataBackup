@@ -19,6 +19,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pierrec/lz4"
 	"google.golang.org/protobuf/proto"
+
+	"bufio"
 )
 
 const (
@@ -1657,6 +1659,95 @@ func (P *WechatDataProvider) WeChatExportDataByUserName(userName, exportPath str
 	}
 	log.Println("WeChatExportDataByUserName done")
 	return nil
+}
+
+func (P *WechatDataProvider) WeChatExportTextByUserName(userName, exportPath string) error {
+    // 创建文本文件
+    textFilePath := fmt.Sprintf("%s\\%s_chat.txt", exportPath, userName)
+    file, err := os.Create(textFilePath)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    writer := bufio.NewWriter(file)
+    defer writer.Flush()
+    
+    // 写入文件头
+    fmt.Fprintf(writer, "聊天记录导出\n用户: %s\n导出时间: %s\n\n", 
+        userName, time.Now().Format("2006-01-02 15:04:05"))
+    
+    // 按时间顺序读取消息
+    pageSize := 1000
+    _time := time.Now().Unix()
+    
+    for {
+        mlist, err := P.WeChatGetMessageListByTime(userName, _time, pageSize, Message_Search_Forward)
+        if err != nil {
+            return err
+        }
+        
+        // 按时间顺序排列消息（从旧到新）
+        for i := len(mlist.Rows) - 1; i >= 0; i-- {
+            msg := mlist.Rows[i]
+            P.formatMessageToText(writer, &msg)
+        }
+        
+        if mlist.Total < pageSize {
+            break
+        }
+        _time = mlist.Rows[mlist.Total-1].CreateTime - 1
+    }
+    
+    return nil
+}
+
+func (P *WechatDataProvider) formatMessageToText(writer *bufio.Writer, msg *WeChatMessage) {
+    // 格式化时间
+    t := time.Unix(msg.CreateTime, 0)
+    timeStr := t.Format("2006-01-02 15:04:05")
+    
+    // 获取发送者信息
+    sender := "我"
+    if msg.IsSender == 0 {
+        if msg.IsChatRoom && msg.UserInfo.UserName != "" {
+            sender = msg.UserInfo.UserName
+        } else {
+            sender = msg.Talker
+        }
+    }
+    
+    // 写入消息
+    fmt.Fprintf(writer, "[%s] %s: ", timeStr, sender)
+    
+    // 根据消息类型格式化内容
+    switch msg.Type {
+    case Wechat_Message_Type_Text:
+        fmt.Fprintln(writer, msg.Content)
+    case Wechat_Message_Type_Emoji:
+        fmt.Fprintln(writer, "[表情]")
+    case Wechat_Message_Type_Picture:
+        fmt.Fprintln(writer, "[图片]")
+    case Wechat_Message_Type_Voice:
+        fmt.Fprintln(writer, "[语音]")
+    case Wechat_Message_Type_Video:
+        fmt.Fprintln(writer, "[视频]")
+    case Wechat_Message_Type_Location:
+        fmt.Fprintf(writer, "[位置] %s\n", msg.LocationInfo.Label)
+    case Wechat_Message_Type_Misc:
+        switch msg.SubType {
+        case Wechat_Misc_Message_File:
+            fmt.Fprintf(writer, "[文件] %s\n", msg.FileInfo.FileName)
+        case Wechat_Misc_Message_CardLink:
+            fmt.Fprintf(writer, "[链接] %s\n", msg.LinkInfo.Title)
+        default:
+            fmt.Fprintf(writer, "[其他消息类型: %d]\n", msg.SubType)
+        }
+    default:
+        fmt.Fprintf(writer, "[消息类型: %d]\n", msg.Type)
+    }
+    
+    fmt.Fprintln(writer) // 空行分隔
 }
 
 func (P *WechatDataProvider) WeChatExportDBByUserName(userName, exportPath string) error {
