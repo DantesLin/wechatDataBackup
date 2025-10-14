@@ -877,3 +877,27 @@ func (a *App) GetAppIsShareData() bool {
 	}
 	return false
 }
+
+func (a *App) ExportWeChatTextByUserName(userName, path string) string {
+    if a.provider == nil || userName == "" || path == "" {
+        return "无效参数"
+    }
+
+    if !utils.PathIsCanWriteFile(path) {
+        return "路径不可写: " + path
+    }
+
+    textPath := path + "\\" + "wechat_text_" + userName + ".txt"
+    
+    // 检查文件是否已存在
+    if _, err := os.Stat(textPath); err == nil {
+        return "文件已存在: " + textPath
+    }
+    
+    err := a.provider.WeChatExportTextByUserName(userName, path)
+    if err != nil {
+        return "导出失败: " + err.Error()
+    }
+
+    return ""
+}
