@@ -384,7 +384,116 @@ func CreateWechatDataProvider(resPath string, prefixRes string) (*WechatDataProv
 	log.Println("Contact number:", provider.ContactList.Total)
 	provider.userInfoMap[userName] = *provider.SelfInfo
 	log.Println("resPath:", provider.resPath)
+	
+	// 在这里添加文本导出功能
+	go provider.exportTextChatRecords(userName)
+	
 	return provider, nil
+}
+
+// 导出文本聊天记录
+func (P *WechatDataProvider) exportTextChatRecords(selfUserName string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("导出文本聊天记录时发生错误:", r)
+		}
+	}()
+	
+	// 创建导出目录
+	exportDir := P.resPath + "\\Export"
+	if _, err := os.Stat(exportDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(exportDir, 0755); err != nil {
+			log.Println("创建导出目录失败:", err)
+			return
+		}
+	}
+	
+	// 导出自己的聊天记录
+	P.exportUserChatToText(selfUserName, exportDir)
+	
+	// 导出联系人的聊天记录
+	for _, contact := range P.ContactList.Users {
+		// 跳过自己
+		if contact.UserName == selfUserName {
+			continue
+		}
+		
+		// 可以添加条件限制，比如只导出有聊天记录的联系人
+		P.exportUserChatToText(contact.UserName, exportDir)
+		
+		// 添加延迟避免过于频繁的查询
+		time.Sleep(100 * time.Millisecond)
+	}
+	
+	log.Println("文本聊天记录导出完成")
+}
+
+// 导出单个用户的聊天记录到文本文件
+func (P *WechatDataProvider) exportUserChatToText(userName, exportDir string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("导出用户 %s 聊天记录时发生错误: %v", userName, r)
+		}
+	}()
+	
+	textFilePath := fmt.Sprintf("%s\\%s_chat.txt", exportDir, userName)
+	
+	// 检查文件是否已存在
+	if _, err := os.Stat(textFilePath); err == nil {
+		log.Printf("用户 %s 的聊天记录文件已存在，跳过导出", userName)
+		return
+	}
+	
+	file, err := os.Create(textFilePath)
+	if err != nil {
+		log.Printf("创建文件失败 %s: %v", textFilePath, err)
+		return
+	}
+	defer file.Close()
+	
+	writer := bufio.NewWriter(file)
+	defer func() {
+		writer.Flush()
+		file.Close()
+	}()
+	
+	// 写入文件头
+	fmt.Fprintf(writer, "微信聊天记录导出\n")
+	fmt.Fprintf(writer, "用户: %s\n", userName)
+	fmt.Fprintf(writer, "导出时间: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(writer, "导出路径: %s\n\n", textFilePath)
+	
+	// 按时间顺序读取消息
+	pageSize := 1000
+	_time := time.Now().Unix()
+	totalMessages := 0
+	
+	for {
+		mlist, err := P.WeChatGetMessageListByTime(userName, _time, pageSize, Message_Search_Forward)
+		if err != nil {
+			log.Printf("获取用户 %s 消息列表失败: %v", userName, err)
+			break
+		}
+		
+		if mlist.Total == 0 {
+			break
+		}
+		
+		// 按时间顺序排列消息（从旧到新）
+		for i := len(mlist.Rows) - 1; i >= 0; i-- {
+			msg := mlist.Rows[i]
+			P.formatMessageToText(writer, &msg)
+			totalMessages++
+		}
+		
+		if mlist.Total < pageSize {
+			break
+		}
+		_time = mlist.Rows[mlist.Total-1].CreateTime - 1
+	}
+	
+	writer.Flush()
+	log.Printf("用户 %s 的聊天记录导出完成，共导出 %d 条消息，保存至: %s", userName, totalMessages, textFilePath)
 }
 
 func (P *WechatDataProvider) WechatWechatDataProviderClose() {
