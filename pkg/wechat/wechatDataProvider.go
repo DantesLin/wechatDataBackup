@@ -2036,6 +2036,78 @@ func (P *WechatDataProvider) weChatExportMsgDBByUserName(userName, exportPath st
 		// log.Println("Name2ID:", userName)
 	}
 
+	// 在这里添加文本导出功能
+	// go provider.exportTextChatRecords(userName)
+	// 添加文本导出功能
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("导出用户 %s 文本聊天记录时发生错误: %v", userName, r)
+			}
+		}()
+		
+		// 创建文本导出文件路径
+		textFilePath := fmt.Sprintf("%s\\%s_chat.txt", exportPath, userName)
+		
+		// 检查文件是否已存在
+		if _, err := os.Stat(textFilePath); err == nil {
+			log.Printf("文本文件已存在，跳过导出: %s", textFilePath)
+			return
+		}
+		
+		// 创建文本文件
+		file, err := os.Create(textFilePath)
+		if err != nil {
+			log.Printf("创建文本文件失败 %s: %v", textFilePath, err)
+			return
+		}
+		defer file.Close()
+		
+		writer := bufio.NewWriter(file)
+		defer func() {
+			writer.Flush()
+			file.Close()
+		}()
+		
+		// 写入文件头
+		fmt.Fprintf(writer, "微信聊天记录导出\n")
+		fmt.Fprintf(writer, "用户: %s\n", userName)
+		fmt.Fprintf(writer, "导出时间: %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+		
+		// 从数据库中读取聊天记录并写入文本文件
+		pageSize := 1000
+		_time := time.Now().Unix()
+		totalMessages := 0
+		
+		for {
+			// 使用现有的消息获取函数
+			mlist, err := P.WeChatGetMessageListByTime(userName, _time, pageSize, Message_Search_Forward)
+			if err != nil {
+				log.Printf("获取用户 %s 消息列表失败: %v", userName, err)
+				break
+			}
+			
+			if mlist.Total == 0 {
+				break
+			}
+			
+			// 按时间顺序排列消息（从旧到新）
+			for i := len(mlist.Rows) - 1; i >= 0; i-- {
+				msg := mlist.Rows[i]
+				P.formatMessageToText(writer, &msg)
+				totalMessages++
+			}
+			
+			if mlist.Total < pageSize {
+				break
+			}
+			_time = mlist.Rows[mlist.Total-1].CreateTime - 1
+		}
+		
+		writer.Flush()
+		log.Printf("用户 %s 的文本聊天记录导出完成，共导出 %d 条消息，保存至: %s", userName, totalMessages, textFilePath)
+	}()
+	
 	return nil
 }
 
