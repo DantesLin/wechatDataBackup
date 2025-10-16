@@ -2036,8 +2036,6 @@ func (P *WechatDataProvider) weChatExportMsgDBByUserName(userName, exportPath st
 		// log.Println("Name2ID:", userName)
 	}
 
-	// 在这里添加文本导出功能
-	// go provider.exportTextChatRecords(userName)
 	// 添加文本导出功能
 	go func() {
 		defer func() {
@@ -2079,6 +2077,9 @@ func (P *WechatDataProvider) weChatExportMsgDBByUserName(userName, exportPath st
 		_time := time.Now().Unix()
 		totalMessages := 0
 		
+		// 收集所有消息
+		var allMessages []WeChatMessage
+		
 		for {
 			// 使用现有的消息获取函数
 			mlist, err := P.WeChatGetMessageListByTime(userName, _time, pageSize, Message_Search_Forward)
@@ -2091,17 +2092,24 @@ func (P *WechatDataProvider) weChatExportMsgDBByUserName(userName, exportPath st
 				break
 			}
 			
-			// 按时间顺序排列消息（从旧到新）
-			for i := len(mlist.Rows) - 1; i >= 0; i-- {
-				msg := mlist.Rows[i]
-				P.formatMessageToText(writer, &msg)
-				totalMessages++
-			}
+			// 将消息添加到总列表中
+			allMessages = append(allMessages, mlist.Rows...)
 			
 			if mlist.Total < pageSize {
 				break
 			}
 			_time = mlist.Rows[mlist.Total-1].CreateTime - 1
+		}
+		
+		// 按时间顺序排序消息
+		sort.Slice(allMessages, func(i, j int) bool {
+			return allMessages[i].CreateTime < allMessages[j].CreateTime
+		})
+		
+		// 写入排序后的消息
+		for _, msg := range allMessages {
+			P.formatMessageToText(writer, &msg)
+			totalMessages++
 		}
 		
 		writer.Flush()
